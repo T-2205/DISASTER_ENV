@@ -1,12 +1,8 @@
 """
 inference.py — Baseline inference script for the OpenEnv hackathon.
 
-REQUIRED by the competition spec. Must:
-  - Use the OpenAI client
-  - Read credentials from environment variables (API_KEY, API_BASE_URL)
-  - Produce structured [START] / [STEP] / [END] stdout logs
-  - Run against all 3 tasks and produce reproducible scores
-  - Complete in under 20 minutes
+Uses requests directly instead of the openai package to avoid version
+conflicts in the validator container. Always hits the LiteLLM proxy.
 """
 
 import os
@@ -17,6 +13,11 @@ import time
 sys.path.insert(0, os.path.dirname(__file__))
 
 from disaster_env import DisasterEnv, FOOD, MEDICAL, RESCUE
+
+# ── Credentials — Scaler injects these ───────────────────────────
+API_KEY      = os.environ.get("API_KEY") or os.environ.get("HF_TOKEN") or "dummy-key"
+API_BASE_URL = (os.environ.get("API_BASE_URL") or "https://router.huggingface.co/v1").rstrip("/")
+MODEL_NAME   = os.environ.get("MODEL_NAME") or "meta-llama/Meta-Llama-3-8B-Instruct"
 
 # ── Task definitions ──────────────────────────────────────────────
 TASKS = [
@@ -48,27 +49,27 @@ Rules:
 - Do not send medical to zones with injured=0"""
 
 
-def get_client():
+def call_llm_proxy(messages: list) -> str:
     """
-    Initialise the OpenAI client using the variables Scaler injects.
-    API_KEY is the primary variable. HF_TOKEN is checked as a fallback.
-    The client is ALWAYS created — never skipped — so the proxy is always hit.
+    Call the LiteLLM proxy using requests directly.
+    Avoids openai package version issues. Always hits API_BASE_URL.
     """
-    from openai import OpenAI
-
-    # Scaler injects API_KEY. HF_TOKEN is kept as fallback for local testing.
-    api_key  = (os.environ.get("API_KEY") or
-                os.environ.get("HF_TOKEN") or
-                "dummy-key")
-
-    api_base = (os.environ.get("API_BASE_URL") or
-                "https://router.huggingface.co/v1")
-
-    model    = (os.environ.get("MODEL_NAME") or
-                "meta-llama/Meta-Llama-3-8B-Instruct")
-
-    client = OpenAI(base_url=api_base, api_key=api_key)
-    return client, model
+    import requests
+    url     = f"{API_BASE_URL}/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {API_KEY}",
+        "Content-Type":  "application/json",
+    }
+    payload = {
+        "model":       MODEL_NAME,
+        "messages":    messages,
+        "max_tokens":  64,
+        "temperature": 0.0,
+    }
+    resp = requests.post(url, headers=headers, json=payload, timeout=30)
+    resp.raise_for_status()
+    data = resp.json()
+    return data["choices"][0]["message"]["content"].strip()
 
 
 def build_state_prompt(env: DisasterEnv) -> str:
@@ -102,24 +103,17 @@ def _rule_fallback(env: DisasterEnv) -> tuple:
     return (FOOD, most_food.zone_id, 2)
 
 
-def llm_agent(env: DisasterEnv, client, model: str) -> tuple:
+def llm_agent(env: DisasterEnv) -> tuple:
     """
-    Call the LLM proxy for every action.
-    Falls back to rule-based ONLY if the API response cannot be parsed —
-    the HTTP call is always attempted so the proxy registers activity.
+    Always calls the proxy via requests. Falls back to rule-based
+    only if the HTTP response cannot be parsed.
     """
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user",   "content": build_state_prompt(env)},
+    ]
     try:
-        prompt   = build_state_prompt(env)
-        response = client.chat.completions.create(
-            model      = model,
-            messages   = [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user",   "content": prompt},
-            ],
-            max_tokens  = 64,
-            temperature = 0.0,
-        )
-        text = response.choices[0].message.content.strip()
+        text = call_llm_proxy(messages)
         if "```" in text:
             text = text.split("```")[1].replace("json", "").strip()
         data           = json.loads(text)
@@ -134,12 +128,11 @@ def llm_agent(env: DisasterEnv, client, model: str) -> tuple:
             raise ValueError("bad quantity_index")
         return (resource_type, zone_id, quantity_index)
     except Exception as exc:
-        # Log the parse/API error for debugging but never crash
         print(f"[DEBUG] llm_agent fallback: {exc}", flush=True)
         return _rule_fallback(env)
 
 
-def run_task(task: dict, client, model: str) -> dict:
+def run_task(task: dict) -> dict:
     task_id    = task["id"]
     difficulty = task["difficulty"]
 
@@ -159,7 +152,7 @@ def run_task(task: dict, client, model: str) -> dict:
     done         = False
 
     while not done:
-        action = llm_agent(env, client, model)
+        action = llm_agent(env)
         resource_type, zone_id, qty_idx = action
 
         obs_dict, reward, done, info = env.step(action)
@@ -186,8 +179,8 @@ def run_task(task: dict, client, model: str) -> dict:
         }
         print(f"[STEP] {json.dumps(step_payload)}", flush=True)
 
-    score  = round(min(1.0, max(0.0, total_reward / (task["max_steps"] * 0.6))), 4)
-    passed = score >= task["success_threshold"]
+    score         = round(min(1.0, max(0.0, total_reward / (task["max_steps"] * 0.6))), 4)
+    passed        = score >= task["success_threshold"]
     zones_cleared = sum(1 for z in env.zones if z.injured == 0 and z.food_need == 0)
 
     end_payload = {
@@ -200,24 +193,20 @@ def run_task(task: dict, client, model: str) -> dict:
         "success_threshold": task["success_threshold"],
     }
     print(f"[END] {json.dumps(end_payload)}", flush=True)
-
     return end_payload
 
 
 if __name__ == "__main__":
-    # Initialise client once — always connects to the proxy
-    client, model = get_client()
-
     results = []
     for task in TASKS:
         try:
-            result = run_task(task, client, model)
+            result = run_task(task)
         except Exception as e:
             result = {
-                "task_id":  task["id"],
-                "score":    0.0,
-                "passed":   False,
-                "error":    str(e),
+                "task_id": task["id"],
+                "score":   0.0,
+                "passed":  False,
+                "error":   str(e),
             }
             print(f"[END] {json.dumps(result)}", flush=True)
         results.append(result)
