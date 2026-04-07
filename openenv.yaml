@@ -1,0 +1,117 @@
+name: disaster-resource-allocation
+version: "1.0.0"
+description: >
+  A multi-zone disaster response simulation where an AI agent must allocate
+  limited emergency resources (food, medical kits, rescue teams) across
+  disaster-affected zones. Each zone has randomised needs based on real-world
+  disaster scenarios (earthquake, flood, hurricane, wildfire). The agent must
+  learn triage strategies — prioritising the most critical zones, avoiding
+  waste, and adapting to escalating needs over time.
+
+author: Tanishq Tiwari
+tags:
+  - disaster-response
+  - resource-allocation
+  - multi-zone
+  - triage
+  - real-world
+
+environment:
+  type: sequential
+  episodes: true
+  max_steps_per_episode: 30
+
+observation_space:
+  type: Box
+  dtype: float32
+  description: >
+    Flat normalised vector. For each zone: [injured, food_need, severity,
+    rescue_blocked, disaster_type_encoded]. Then appended resource stocks:
+    [food_stock, med_stock, resc_stock]. All values in [0.0, 1.0].
+  shape_formula: "num_zones * 5 + 3"
+  examples:
+    easy:   18    # 3 zones  * 5 + 3
+    medium: 28    # 5 zones  * 5 + 3
+    hard:   43    # 8 zones  * 5 + 3
+
+action_space:
+  type: Discrete
+  description: >
+    Integer index encoding (resource_type, zone_id, quantity_index).
+    resource_type: 0=food, 1=medical, 2=rescue.
+    quantity_index: 0=10 units, 1=20 units, 2=30 units.
+  size_formula: "3 * num_zones * 3"
+  examples:
+    easy:   27    # 3 * 3 * 3
+    medium: 45    # 3 * 5 * 3
+    hard:   72    # 3 * 8 * 3
+
+reward:
+  type: float
+  range: [0.0, 1.0]
+  description: >
+    Composite reward with three components:
+    (1) need_score * 0.6  — fraction of total unmet need reduced
+    (2) priority_score * 0.3 — bonus for helping highest-severity zone
+    (3) waste_penalty up to -0.1 — penalty for sending unneeded resources
+  signal: dense
+  partial_progress: true
+
+tasks:
+  - id: easy
+    name: "Basic Resource Allocation"
+    difficulty: easy
+    description: >
+      3 zones, abundant resources, no escalation, no blocked zones.
+      Agent must learn to allocate food and medical aid across zones.
+    max_steps: 20
+    num_zones: 3
+    success_threshold: 0.5
+    grader: graders.EasyGrader
+
+  - id: medium
+    name: "Triage Under Scarcity"
+    difficulty: medium
+    description: >
+      5 zones, moderate scarcity, 5% need escalation per step,
+      20% chance of blocked zones requiring rescue teams to unlock.
+      Agent must learn triage — help critical zones first.
+    max_steps: 25
+    num_zones: 5
+    success_threshold: 0.3
+    grader: graders.MediumGrader
+
+  - id: hard
+    name: "Crisis Management"
+    difficulty: hard
+    description: >
+      8 zones, severe scarcity, 10% need escalation per step,
+      40% chance of blocked zones. Agent must triage aggressively —
+      cannot save everyone, must minimise total suffering.
+    max_steps: 30
+    num_zones: 8
+    success_threshold: 0.15
+    grader: graders.HardGrader
+
+api:
+  reset: "Returns initial observation dict for a fresh episode"
+  step: "Accepts action tuple, returns (observation, reward, done, info)"
+  state: "Returns current world state snapshot"
+
+setup:
+  python: ">=3.9"
+  install: "pip install -r requirements.txt"
+  run: "python server.py"
+  docker: "docker build -t disaster-env . && docker run -p 7860:7860 disaster-env"
+
+baseline_scores:
+  random_agent:
+    easy: 0.35
+    medium: 0.09
+    hard: 0.05
+  rule_based_agent:
+    easy: 0.59
+    medium: 0.16
+    hard: 0.09
+  trained_ppo:
+    medium: 0.28

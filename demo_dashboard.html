@@ -1,0 +1,568 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Disaster AI — Live Demo</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@300;400;500;600&display=swap');
+
+  :root {
+    --bg: #0a0e1a;
+    --surface: #111827;
+    --surface2: #1a2235;
+    --border: rgba(99,179,237,0.15);
+    --accent: #63b3ed;
+    --accent2: #68d391;
+    --danger: #fc8181;
+    --warn: #f6ad55;
+    --purple: #b794f4;
+    --text: #e2e8f0;
+    --muted: #718096;
+    --mono: 'Space Mono', monospace;
+    --sans: 'DM Sans', sans-serif;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* grid background */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(99,179,237,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(99,179,237,0.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .wrap { position: relative; z-index: 1; max-width: 1100px; margin: 0 auto; padding: 24px 20px; }
+
+  /* ── Header ── */
+  header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; }
+  .logo { display: flex; align-items: center; gap: 12px; }
+  .logo-icon { width: 36px; height: 36px; background: var(--accent); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 18px; }
+  .logo-text { font-family: var(--mono); font-size: 13px; color: var(--accent); letter-spacing: 0.05em; }
+  .logo-sub { font-size: 11px; color: var(--muted); margin-top: 1px; }
+  .status-pill { font-family: var(--mono); font-size: 11px; padding: 4px 12px; border-radius: 20px; border: 1px solid var(--border); color: var(--muted); }
+  .status-pill.running { border-color: rgba(104,211,145,0.4); color: var(--accent2); }
+  .status-pill.running::before { content: '● '; }
+
+  /* ── Top stats ── */
+  .stats-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 20px; }
+  .stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
+  .stat-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 6px; font-family: var(--mono); }
+  .stat-val { font-size: 24px; font-weight: 600; color: var(--text); font-family: var(--mono); }
+  .stat-val.accent { color: var(--accent); }
+  .stat-val.green  { color: var(--accent2); }
+  .stat-val.warn   { color: var(--warn); }
+  .stat-val.danger { color: var(--danger); }
+
+  /* ── Main grid ── */
+  .main-grid { display: grid; grid-template-columns: 1fr 320px; gap: 16px; margin-bottom: 16px; }
+
+  /* ── Zone panel ── */
+  .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
+  .panel-title { font-family: var(--mono); font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 14px; }
+
+  .zone-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+  .zone-card { background: var(--surface2); border-radius: 10px; padding: 12px; border: 1px solid var(--border); transition: border-color 0.3s, transform 0.2s; position: relative; overflow: hidden; }
+  .zone-card.critical { border-color: rgba(252,129,129,0.5); }
+  .zone-card.targeted { border-color: rgba(99,179,237,0.6); transform: scale(1.02); }
+  .zone-card.targeted::after { content: 'AI TARGET'; position: absolute; top: 8px; right: 8px; font-family: var(--mono); font-size: 9px; color: var(--accent); background: rgba(99,179,237,0.1); padding: 2px 6px; border-radius: 4px; }
+  .zone-card.blocked { border-color: rgba(246,173,85,0.4); }
+  .zone-card.blocked::after { content: 'BLOCKED'; position: absolute; top: 8px; right: 8px; font-family: var(--mono); font-size: 9px; color: var(--warn); background: rgba(246,173,85,0.1); padding: 2px 6px; border-radius: 4px; }
+
+  .zone-name { font-family: var(--mono); font-size: 12px; font-weight: 700; color: var(--accent); margin-bottom: 4px; }
+  .zone-type { font-size: 11px; color: var(--muted); margin-bottom: 10px; text-transform: capitalize; }
+
+  .bar-row { margin-bottom: 7px; }
+  .bar-label { display: flex; justify-content: space-between; font-size: 10px; color: var(--muted); margin-bottom: 3px; font-family: var(--mono); }
+  .bar-track { height: 5px; background: rgba(255,255,255,0.06); border-radius: 3px; overflow: hidden; }
+  .bar-fill  { height: 100%; border-radius: 3px; transition: width 0.6s ease; }
+  .bar-food    { background: var(--accent2); }
+  .bar-medical { background: var(--danger); }
+  .bar-sev     { background: var(--warn); }
+
+  .zone-pop { font-size: 10px; color: var(--muted); margin-top: 8px; font-family: var(--mono); }
+
+  /* ── Right panel ── */
+  .right-col { display: flex; flex-direction: column; gap: 16px; }
+
+  /* Resources */
+  .res-item { margin-bottom: 12px; }
+  .res-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px; }
+  .res-name { font-size: 12px; color: var(--text); font-weight: 500; }
+  .res-val  { font-family: var(--mono); font-size: 12px; color: var(--accent); }
+  .res-track { height: 6px; background: rgba(255,255,255,0.06); border-radius: 3px; overflow: hidden; }
+  .res-bar   { height: 100%; border-radius: 3px; transition: width 0.6s ease; }
+
+  /* Log */
+  .log-list { list-style: none; max-height: 180px; overflow-y: auto; }
+  .log-list::-webkit-scrollbar { width: 3px; }
+  .log-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+  .log-item { font-family: var(--mono); font-size: 11px; color: var(--muted); padding: 5px 0; border-bottom: 1px solid rgba(255,255,255,0.04); line-height: 1.5; }
+  .log-item .step-num { color: var(--accent); }
+  .log-item .res-tag  { color: var(--accent2); }
+  .log-item .rew-tag  { color: var(--warn); }
+
+  /* Reward chart */
+  #reward-canvas { width: 100%; height: 90px; display: block; }
+
+  /* ── Controls ── */
+  .controls { display: flex; align-items: center; gap: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 20px; }
+  .ctrl-btn { font-family: var(--mono); font-size: 12px; padding: 8px 20px; border-radius: 8px; border: 1px solid var(--border); background: transparent; color: var(--text); cursor: pointer; transition: all 0.2s; }
+  .ctrl-btn:hover { background: var(--surface2); border-color: var(--accent); color: var(--accent); }
+  .ctrl-btn.primary { background: var(--accent); color: var(--bg); border-color: var(--accent); font-weight: 700; }
+  .ctrl-btn.primary:hover { opacity: 0.85; }
+  .ctrl-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+
+  .speed-group { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+  .speed-label { font-size: 12px; color: var(--muted); }
+  .speed-select { font-family: var(--mono); font-size: 12px; background: var(--surface2); border: 1px solid var(--border); color: var(--text); padding: 6px 10px; border-radius: 6px; cursor: pointer; }
+
+  .diff-group { display: flex; gap: 6px; }
+  .diff-btn { font-family: var(--mono); font-size: 11px; padding: 6px 12px; border-radius: 6px; border: 1px solid var(--border); background: transparent; color: var(--muted); cursor: pointer; transition: all 0.2s; }
+  .diff-btn.active { border-color: var(--purple); color: var(--purple); background: rgba(183,148,244,0.08); }
+
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
+  .pulsing { animation: pulse 1s infinite; }
+
+  @keyframes slideIn { from{opacity:0;transform:translateY(-4px)} to{opacity:1;transform:translateY(0)} }
+  .log-item { animation: slideIn 0.2s ease; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- Header -->
+  <header>
+    <div class="logo">
+      <div class="logo-icon">🌐</div>
+      <div>
+        <div class="logo-text">DISASTER-AI / LIVE DEMO</div>
+        <div class="logo-sub">Multi-Zone Resource Allocation · OpenEnv</div>
+      </div>
+    </div>
+    <div class="status-pill" id="status-pill">IDLE</div>
+  </header>
+
+  <!-- Stats row -->
+  <div class="stats-row">
+    <div class="stat-card">
+      <div class="stat-label">Episode Step</div>
+      <div class="stat-val accent" id="stat-step">0 / 25</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Last Reward</div>
+      <div class="stat-val green" id="stat-reward">0.000</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Total Reward</div>
+      <div class="stat-val warn" id="stat-total">0.000</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Zones Cleared</div>
+      <div class="stat-val" id="stat-cleared">0 / 5</div>
+    </div>
+  </div>
+
+  <!-- Main content -->
+  <div class="main-grid">
+
+    <!-- Zones -->
+    <div class="panel">
+      <div class="panel-title">Disaster Zones — Live State</div>
+      <div class="zone-grid" id="zone-grid"></div>
+    </div>
+
+    <!-- Right col -->
+    <div class="right-col">
+
+      <!-- Resources -->
+      <div class="panel">
+        <div class="panel-title">Resource Stock</div>
+        <div class="res-item">
+          <div class="res-header">
+            <span class="res-name">🍱 Food units</span>
+            <span class="res-val" id="food-val">300</span>
+          </div>
+          <div class="res-track"><div class="res-bar" id="food-bar" style="width:100%;background:var(--accent2);"></div></div>
+        </div>
+        <div class="res-item">
+          <div class="res-header">
+            <span class="res-name">💊 Medical kits</span>
+            <span class="res-val" id="med-val">150</span>
+          </div>
+          <div class="res-track"><div class="res-bar" id="med-bar" style="width:100%;background:var(--danger);"></div></div>
+        </div>
+        <div class="res-item" style="margin-bottom:0">
+          <div class="res-header">
+            <span class="res-name">🚁 Rescue teams</span>
+            <span class="res-val" id="resc-val">20</span>
+          </div>
+          <div class="res-track"><div class="res-bar" id="resc-bar" style="width:100%;background:var(--purple);"></div></div>
+        </div>
+      </div>
+
+      <!-- Reward chart -->
+      <div class="panel">
+        <div class="panel-title">Reward per step</div>
+        <canvas id="reward-canvas"></canvas>
+      </div>
+
+      <!-- Action log -->
+      <div class="panel" style="flex:1">
+        <div class="panel-title">AI Decision Log</div>
+        <ul class="log-list" id="log-list">
+          <li class="log-item" style="color:var(--muted)">Waiting for episode to start...</li>
+        </ul>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Controls -->
+  <div class="controls">
+    <div class="diff-group">
+      <button class="diff-btn active" onclick="setDiff('easy',this)">Easy</button>
+      <button class="diff-btn" onclick="setDiff('medium',this)">Medium</button>
+      <button class="diff-btn" onclick="setDiff('hard',this)">Hard</button>
+    </div>
+    <button class="ctrl-btn primary" id="btn-start" onclick="startEpisode()">▶ Start Episode</button>
+    <button class="ctrl-btn" id="btn-step" onclick="doStep()" disabled>Step →</button>
+    <button class="ctrl-btn" id="btn-reset" onclick="resetAll()">↺ Reset</button>
+    <div class="speed-group">
+      <span class="speed-label">Speed</span>
+      <select class="speed-select" id="speed-sel">
+        <option value="1200">Slow</option>
+        <option value="600" selected>Normal</option>
+        <option value="200">Fast</option>
+        <option value="50">Turbo</option>
+      </select>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ══════════════════════════════════════════════
+// Simulation engine (pure JS — no Python needed)
+// Mirrors the logic of disaster_env.py exactly
+// ══════════════════════════════════════════════
+
+const DISASTER_TYPES = ['earthquake','flood','hurricane','wildfire'];
+const CONFIGS = {
+  easy:   { num_zones:3, food:200, medical:100, rescue:15, escalation:0.00, max_steps:20, restock:0.00 },
+  medium: { num_zones:5, food:300, medical:150, rescue:20, escalation:0.05, max_steps:25, restock:0.05 },
+  hard:   { num_zones:8, food:250, medical:100, rescue:12, escalation:0.10, max_steps:30, restock:0.02 },
+};
+
+let difficulty = 'easy';
+let cfg, zones, foodStock, medStock, rescStock, stepCount, done;
+let rewardHistory = [];
+let totalReward   = 0;
+let autoTimer     = null;
+
+function rnd(a,b){ return Math.floor(Math.random()*(b-a+1))+a; }
+function rndF(a,b){ return Math.round((Math.random()*(b-a)+a)*100)/100; }
+
+function makeZone(id, diff) {
+  const type = DISASTER_TYPES[Math.floor(Math.random()*4)];
+  let pop, inj, food, sev, blocked;
+  if (diff==='easy')   { pop=rnd(100,400); inj=rnd(5,50);   food=rnd(20,80);  sev=rndF(0.1,0.4); blocked=false; }
+  if (diff==='medium') { pop=rnd(200,800); inj=rnd(20,150); food=rnd(50,200); sev=rndF(0.3,0.7); blocked=Math.random()<0.2; }
+  if (diff==='hard')   { pop=rnd(500,2000);inj=rnd(100,500);food=rnd(150,400);sev=rndF(0.6,1.0); blocked=Math.random()<0.4; }
+  return { id, name:'Zone '+String.fromCharCode(65+id), type, population:pop,
+           injured:inj, food_need:food, severity:sev, rescue_blocked:blocked,
+           init_inj:inj, init_food:food };
+}
+
+function resetEnv() {
+  cfg       = CONFIGS[difficulty];
+  zones     = Array.from({length:cfg.num_zones},(_,i)=>makeZone(i,difficulty));
+  foodStock = cfg.food; medStock = cfg.medical; rescStock = cfg.rescue;
+  stepCount = 0; done = false;
+  rewardHistory = []; totalReward = 0;
+}
+
+// Rule-based AI (mirrors rule_based_agent.py)
+function aiPickAction() {
+  // 1. Unblock first
+  for (let z of zones) {
+    if (z.rescue_blocked) return { res:'rescue', zone:z.id, qty:20 };
+  }
+  // 2. Most injured → medical
+  const mostInj  = zones.reduce((a,b)=>a.injured>b.injured?a:b);
+  // 3. Most hungry → food
+  const mostFood = zones.reduce((a,b)=>a.food_need>b.food_need?a:b);
+
+  if (mostInj.injured >= mostFood.food_need) {
+    return { res:'medical', zone:mostInj.id, qty:30 };
+  } else {
+    return { res:'food', zone:mostFood.id, qty:30 };
+  }
+}
+
+function applyAction(action) {
+  const z = zones[action.zone];
+  let actual = action.qty;
+
+  if (action.res === 'food') {
+    actual = Math.min(actual, foodStock);
+    foodStock -= actual;
+    z.food_need = Math.max(0, z.food_need - actual);
+  } else if (action.res === 'medical') {
+    actual = Math.min(actual, medStock);
+    medStock -= actual;
+    z.injured = Math.max(0, z.injured - actual);
+  } else if (action.res === 'rescue') {
+    actual = Math.min(actual, rescStock);
+    rescStock -= actual;
+    if (z.rescue_blocked) { z.rescue_blocked = false; actual -= 1; }
+    if (actual > 0) z.injured = Math.max(0, z.injured - actual*5);
+  }
+  return actual;
+}
+
+function calcReward(action, actualQty) {
+  const totalInj  = zones.reduce((s,z)=>s+z.injured,0);
+  const totalFood = zones.reduce((s,z)=>s+z.food_need,0);
+  const initInj   = zones.reduce((s,z)=>s+z.init_inj,0);
+  const initFood  = zones.reduce((s,z)=>s+z.init_food,0);
+
+  const injCov  = 1-(totalInj /Math.max(1,initInj));
+  const foodCov = 1-(totalFood/Math.max(1,initFood));
+  const needScore = Math.max(0,Math.min(1,(injCov+foodCov)/2));
+
+  const mostCrit = zones.reduce((a,b)=>a.severity>b.severity?a:b);
+  const priorityScore = action.zone===mostCrit.id ? 1.0 : 0.3;
+
+  const z = zones[action.zone];
+  let waste = 0;
+  if (action.res==='food'    && z.food_need===0) waste=0.1;
+  if (action.res==='medical' && z.injured===0)   waste=0.1;
+  if (action.res==='rescue'  && !z.rescue_blocked && z.injured===0) waste=0.1;
+
+  return Math.max(0,Math.min(1, needScore*0.6 + priorityScore*0.3 - waste));
+}
+
+function escalate() {
+  if (cfg.escalation > 0) {
+    zones.forEach(z => {
+      z.food_need = Math.round(z.food_need*(1+cfg.escalation));
+      z.injured   = Math.round(z.injured*(1+cfg.escalation*0.5));
+    });
+  }
+  if (cfg.restock > 0) {
+    foodStock += Math.floor(cfg.food*cfg.restock);
+    medStock  += Math.floor(cfg.medical*cfg.restock);
+    rescStock += Math.floor(cfg.rescue*cfg.restock);
+  }
+}
+
+function checkDone() {
+  if (stepCount >= cfg.max_steps) return true;
+  return zones.every(z=>z.injured===0&&z.food_need===0);
+}
+
+// ══════════════════════════════════════════════
+// UI rendering
+// ══════════════════════════════════════════════
+
+function renderZones(targetZoneId) {
+  const grid = document.getElementById('zone-grid');
+  grid.innerHTML = '';
+  zones.forEach(z => {
+    const foodPct = Math.min(100, (z.food_need/(z.init_food||1))*100).toFixed(1);
+    const injPct  = Math.min(100, (z.injured/(z.init_inj||1))*100).toFixed(1);
+    const sevPct  = (z.severity*100).toFixed(0);
+    let cls = 'zone-card';
+    if (z.rescue_blocked) cls += ' blocked';
+    else if (z.severity >= 0.7) cls += ' critical';
+    if (z.id === targetZoneId) cls += ' targeted';
+
+    grid.innerHTML += `
+      <div class="${cls}">
+        <div class="zone-name">${z.name}</div>
+        <div class="zone-type">${z.type}</div>
+        <div class="bar-row">
+          <div class="bar-label"><span>Food need</span><span>${z.food_need}</span></div>
+          <div class="bar-track"><div class="bar-fill bar-food" style="width:${foodPct}%"></div></div>
+        </div>
+        <div class="bar-row">
+          <div class="bar-label"><span>Injured</span><span>${z.injured}</span></div>
+          <div class="bar-track"><div class="bar-fill bar-medical" style="width:${injPct}%"></div></div>
+        </div>
+        <div class="bar-row">
+          <div class="bar-label"><span>Severity</span><span>${z.severity}</span></div>
+          <div class="bar-track"><div class="bar-fill bar-sev" style="width:${sevPct}%"></div></div>
+        </div>
+        <div class="zone-pop">Pop: ${z.population.toLocaleString()}</div>
+      </div>`;
+  });
+}
+
+function renderResources() {
+  const maxFood = cfg.food*2, maxMed = cfg.medical*2, maxResc = cfg.rescue*2;
+  document.getElementById('food-val').textContent = foodStock;
+  document.getElementById('med-val').textContent  = medStock;
+  document.getElementById('resc-val').textContent = rescStock;
+  document.getElementById('food-bar').style.width = Math.min(100,(foodStock/cfg.food)*100)+'%';
+  document.getElementById('med-bar').style.width  = Math.min(100,(medStock/cfg.medical)*100)+'%';
+  document.getElementById('resc-bar').style.width = Math.min(100,(rescStock/cfg.rescue)*100)+'%';
+}
+
+function renderStats(reward) {
+  const cleared = zones.filter(z=>z.injured===0&&z.food_need===0).length;
+  document.getElementById('stat-step').textContent    = `${stepCount} / ${cfg.max_steps}`;
+  document.getElementById('stat-reward').textContent  = reward.toFixed(3);
+  document.getElementById('stat-total').textContent   = totalReward.toFixed(3);
+  document.getElementById('stat-cleared').textContent = `${cleared} / ${zones.length}`;
+}
+
+function addLog(step, action, qty, zone, reward) {
+  const list = document.getElementById('log-list');
+  const resEmoji = {food:'🍱', medical:'💊', rescue:'🚁'}[action.res];
+  const li = document.createElement('li');
+  li.className = 'log-item';
+  li.innerHTML = `<span class="step-num">S${String(step).padStart(2,'0')}</span> → <span class="res-tag">${resEmoji} ${qty} ${action.res}</span> → ${zone.name} <span class="rew-tag">+${reward.toFixed(3)}</span>`;
+  list.insertBefore(li, list.firstChild);
+  if (list.children.length > 30) list.removeChild(list.lastChild);
+}
+
+function drawChart() {
+  const canvas = document.getElementById('reward-canvas');
+  const W = canvas.offsetWidth || 280, H = 90;
+  canvas.width = W; canvas.height = H;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0,0,W,H);
+
+  if (rewardHistory.length < 2) return;
+
+  const max = Math.max(...rewardHistory, 0.1);
+  const pts = rewardHistory.map((r,i) => ({
+    x: (i/(rewardHistory.length-1))*W,
+    y: H - (r/max)*(H-10) - 5
+  }));
+
+  // fill
+  ctx.beginPath();
+  ctx.moveTo(pts[0].x, H);
+  pts.forEach(p=>ctx.lineTo(p.x,p.y));
+  ctx.lineTo(pts[pts.length-1].x, H);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(99,179,237,0.08)';
+  ctx.fill();
+
+  // line
+  ctx.beginPath();
+  pts.forEach((p,i)=>i===0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y));
+  ctx.strokeStyle = '#63b3ed';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  // dot at end
+  const last = pts[pts.length-1];
+  ctx.beginPath();
+  ctx.arc(last.x, last.y, 3, 0, Math.PI*2);
+  ctx.fillStyle = '#63b3ed';
+  ctx.fill();
+}
+
+// ══════════════════════════════════════════════
+// Controls
+// ══════════════════════════════════════════════
+
+function setDiff(d, btn) {
+  difficulty = d;
+  document.querySelectorAll('.diff-btn').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+}
+
+function startEpisode() {
+  if (autoTimer) clearInterval(autoTimer);
+  resetEnv();
+  renderZones(-1);
+  renderResources();
+  renderStats(0);
+  document.getElementById('log-list').innerHTML = '<li class="log-item" style="color:var(--muted)">Episode started — AI is thinking...</li>';
+  drawChart();
+
+  document.getElementById('btn-start').disabled = true;
+  document.getElementById('btn-step').disabled  = false;
+  document.getElementById('status-pill').textContent = 'RUNNING';
+  document.getElementById('status-pill').className   = 'status-pill running';
+
+  const speed = parseInt(document.getElementById('speed-sel').value);
+  autoTimer = setInterval(()=>{ if(!doStep()) clearInterval(autoTimer); }, speed);
+}
+
+function doStep() {
+  if (done) return false;
+  const action = aiPickAction();
+  const actual = applyAction(action);
+  const reward = calcReward(action, actual);
+
+  totalReward += reward;
+  rewardHistory.push(reward);
+  stepCount++;
+
+  escalate();
+  done = checkDone();
+
+  renderZones(action.zone);
+  renderResources();
+  renderStats(reward);
+  addLog(stepCount, action, actual, zones[action.zone], reward);
+  drawChart();
+
+  if (done) {
+    clearInterval(autoTimer);
+    document.getElementById('status-pill').textContent = done ? 'DONE' : 'RUNNING';
+    document.getElementById('status-pill').className   = 'status-pill';
+    document.getElementById('btn-start').disabled = false;
+    document.getElementById('btn-step').disabled  = true;
+    const li = document.createElement('li');
+    li.className = 'log-item';
+    li.style.color = '#68d391';
+    li.textContent = `── Episode complete · Total reward: ${totalReward.toFixed(3)} ──`;
+    document.getElementById('log-list').insertBefore(li, document.getElementById('log-list').firstChild);
+    return false;
+  }
+  return true;
+}
+
+function resetAll() {
+  if (autoTimer) clearInterval(autoTimer);
+  resetEnv();
+  renderZones(-1);
+  renderResources();
+  renderStats(0);
+  document.getElementById('log-list').innerHTML = '<li class="log-item" style="color:var(--muted)">Waiting for episode to start...</li>';
+  document.getElementById('status-pill').textContent = 'IDLE';
+  document.getElementById('status-pill').className   = 'status-pill';
+  document.getElementById('btn-start').disabled = false;
+  document.getElementById('btn-step').disabled  = true;
+  drawChart();
+}
+
+// Init
+resetEnv();
+renderZones(-1);
+renderResources();
+renderStats(0);
+</script>
+</body>
+</html>
