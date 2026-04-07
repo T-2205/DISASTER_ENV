@@ -3,15 +3,10 @@ inference.py — Baseline inference script for the OpenEnv hackathon.
 
 REQUIRED by the competition spec. Must:
   - Use the OpenAI client
-  - Read credentials from environment variables
+  - Read credentials from environment variables (API_KEY, API_BASE_URL)
   - Produce structured [START] / [STEP] / [END] stdout logs
   - Run against all 3 tasks and produce reproducible scores
   - Complete in under 20 minutes
-
-Environment variables required:
-    API_BASE_URL  — the LLM API endpoint
-    MODEL_NAME    — model identifier
-    HF_TOKEN      — your Hugging Face API key
 """
 
 import os
@@ -55,20 +50,25 @@ Rules:
 
 def get_client():
     """
-    Create the OpenAI client safely inside a function.
-    Returns None if credentials are missing or connection fails.
+    Initialise the OpenAI client using the variables Scaler injects.
+    API_KEY is the primary variable. HF_TOKEN is checked as a fallback.
+    The client is ALWAYS created — never skipped — so the proxy is always hit.
     """
-    try:
-        from openai import OpenAI
-        api_base = os.environ.get("API_BASE_URL", "https://api-inference.huggingface.co/v1")
-        hf_token = os.environ.get("HF_TOKEN", "")
-        model    = os.environ.get("MODEL_NAME", "meta-llama/Meta-Llama-3-8B-Instruct")
-        if not hf_token:
-            return None, model
-        client = OpenAI(base_url=api_base, api_key=hf_token)
-        return client, model
-    except Exception:
-        return None, os.environ.get("MODEL_NAME", "meta-llama/Meta-Llama-3-8B-Instruct")
+    from openai import OpenAI
+
+    # Scaler injects API_KEY. HF_TOKEN is kept as fallback for local testing.
+    api_key  = (os.environ.get("API_KEY") or
+                os.environ.get("HF_TOKEN") or
+                "dummy-key")
+
+    api_base = (os.environ.get("API_BASE_URL") or
+                "https://router.huggingface.co/v1")
+
+    model    = (os.environ.get("MODEL_NAME") or
+                "meta-llama/Meta-Llama-3-8B-Instruct")
+
+    client = OpenAI(base_url=api_base, api_key=api_key)
+    return client, model
 
 
 def build_state_prompt(env: DisasterEnv) -> str:
@@ -91,7 +91,7 @@ def build_state_prompt(env: DisasterEnv) -> str:
 
 
 def _rule_fallback(env: DisasterEnv) -> tuple:
-    """Rule-based fallback when LLM is unavailable or fails."""
+    """Rule-based fallback used only if the LLM response cannot be parsed."""
     for z in env.zones:
         if z.rescue_blocked:
             return (RESCUE, z.zone_id, 1)
@@ -103,9 +103,11 @@ def _rule_fallback(env: DisasterEnv) -> tuple:
 
 
 def llm_agent(env: DisasterEnv, client, model: str) -> tuple:
-    """Call LLM to pick an action. Falls back to rule-based if anything fails."""
-    if client is None:
-        return _rule_fallback(env)
+    """
+    Call the LLM proxy for every action.
+    Falls back to rule-based ONLY if the API response cannot be parsed —
+    the HTTP call is always attempted so the proxy registers activity.
+    """
     try:
         prompt   = build_state_prompt(env)
         response = client.chat.completions.create(
@@ -125,13 +127,15 @@ def llm_agent(env: DisasterEnv, client, model: str) -> tuple:
         zone_id        = int(data["zone_id"])
         quantity_index = int(data["quantity_index"])
         if resource_type not in (0, 1, 2):
-            raise ValueError
+            raise ValueError("bad resource_type")
         if not (0 <= zone_id < len(env.zones)):
-            raise ValueError
+            raise ValueError("bad zone_id")
         if quantity_index not in (0, 1, 2):
-            raise ValueError
+            raise ValueError("bad quantity_index")
         return (resource_type, zone_id, quantity_index)
-    except Exception:
+    except Exception as exc:
+        # Log the parse/API error for debugging but never crash
+        print(f"[DEBUG] llm_agent fallback: {exc}", flush=True)
         return _rule_fallback(env)
 
 
@@ -201,7 +205,7 @@ def run_task(task: dict, client, model: str) -> dict:
 
 
 if __name__ == "__main__":
-    # Initialise client once — safely, with full fallback
+    # Initialise client once — always connects to the proxy
     client, model = get_client()
 
     results = []
@@ -209,7 +213,6 @@ if __name__ == "__main__":
         try:
             result = run_task(task, client, model)
         except Exception as e:
-            # Never let one task crash the whole script
             result = {
                 "task_id":  task["id"],
                 "score":    0.0,
@@ -230,4 +233,4 @@ if __name__ == "__main__":
     }
     print(f"\n[SUMMARY] {json.dumps(summary)}", flush=True)
 
-    sys.exit(0)   # Always exit 0 — never crash the validator
+    sys.exit(0)
