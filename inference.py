@@ -13,147 +13,128 @@ TASKS = [
 ]
 
 RESOURCE_NAMES = {0: "food", 1: "medical", 2: "rescue"}
-QTY_MAP        = {0: 10, 1: 20, 2: 30}
+QTY_MAP = {0: 10, 1: 20, 2: 30}
 
-SYSTEM_PROMPT = """You are an emergency response coordinator AI.
-You allocate disaster relief resources across multiple zones.
-Each zone has injured people, food shortages, and varying severity.
-Blocked zones need rescue teams before other resources can help.
+SYSTEM_PROMPT = """You are an emergency response AI.
+Return ONLY valid JSON:
+{"resource_type":0-2,"zone_id":int,"quantity_index":0-2}
+"""
 
-Respond ONLY with a valid JSON object, nothing else:
-{"resource_type": <0|1|2>, "zone_id": <int>, "quantity_index": <0|1|2>}
-
-resource_type: 0=food, 1=medical, 2=rescue
-quantity_index: 0=10 units, 1=20 units, 2=30 units
-
-Strategy: unblock zones first, then help highest severity zones."""
-
-# Read ALL required env vars from the competition proxy
-API_BASE_URL = os.environ.get("API_BASE_URL", "").strip()
-MODEL_NAME   = os.environ.get("MODEL_NAME",   "meta-llama/Meta-Llama-3-8B-Instruct").strip()
-HF_TOKEN     = os.environ.get("HF_TOKEN",     "").strip()
-
-print(f"[DEBUG] API_BASE_URL={API_BASE_URL!r}", flush=True)
-print(f"[DEBUG] MODEL_NAME={MODEL_NAME!r}", flush=True)
-print(f"[DEBUG] HF_TOKEN={'SET' if HF_TOKEN else 'MISSING'}", flush=True)
-
-
+# ─────────────────────────────
 def get_client():
     from openai import OpenAI
 
-    if not API_BASE_URL:
-        print("[FATAL] API_BASE_URL environment variable is not set", flush=True)
-        sys.exit(1)
+    api_base = os.environ.get("API_BASE_URL")
+    api_key = os.environ.get("API_KEY")
 
-    if not HF_TOKEN:
-        print("[FATAL] HF_TOKEN environment variable is not set", flush=True)
-        sys.exit(1)
+    print(f"[DEBUG] API_BASE_URL={api_base}", flush=True)
+    print(f"[DEBUG] API_KEY exists={api_key is not None}", flush=True)
+
+    if not api_base or not api_key:
+        raise RuntimeError("Missing API_BASE_URL or API_KEY")
 
     client = OpenAI(
-        base_url=API_BASE_URL,
-        api_key=HF_TOKEN,
+        base_url=api_base,
+        api_key=api_key,
     )
 
-    print(f"[DEBUG] Client created -> base_url={API_BASE_URL}", flush=True)
-    return client
+    model = os.environ.get(
+        "MODEL_NAME",
+        "meta-llama/Meta-Llama-3-8B-Instruct"
+    )
+
+    print(f"[DEBUG] MODEL={model}", flush=True)
+    print("[DEBUG] CLIENT CREATED", flush=True)
+
+    return client, model
 
 
-def build_prompt(env):
-    state = env.state()
-    lines = [
-        f"Step {state['step']}/{state['max_steps']} | Difficulty: {env.difficulty}",
-        f"Stock -> Food:{state['food_stock']} Medical:{state['med_stock']} Rescue:{state['resc_stock']}",
-        "",
-        "Zone states:",
-    ]
-    for z in state["zones"]:
-        blocked = " [BLOCKED - send rescue first]" if z["rescue_blocked"] else ""
-        lines.append(
-            f"  Zone {z['zone_id']} ({z['name']}){blocked}: "
-            f"disaster={z['disaster_type']}, severity={z['severity']:.2f}, "
-            f"injured={z['injured']}, food_need={z['food_need']}"
-        )
-    lines += [
-        "",
-        'Respond ONLY with JSON: {"resource_type": 0-2, "zone_id": int, "quantity_index": 0-2}',
-    ]
-    return "\n".join(lines)
-
-
+# ─────────────────────────────
 def fallback(env):
     for z in env.zones:
         if z.rescue_blocked:
             return (RESCUE, z.zone_id, 1)
-    most_inj  = max(env.zones, key=lambda z: z.injured)
+
+    most_inj = max(env.zones, key=lambda z: z.injured)
     most_food = max(env.zones, key=lambda z: z.food_need)
+
     if most_inj.injured >= most_food.food_need:
         return (MEDICAL, most_inj.zone_id, 2)
+
     return (FOOD, most_food.zone_id, 2)
 
 
-def llm_agent(env, client):
-    prompt = build_prompt(env)
-    print("[DEBUG] Calling LLM via competition proxy...", flush=True)
+# ─────────────────────────────
+def llm_agent(env, client, model):
+    if client is None:
+        print("[WARN] client is None → fallback", flush=True)
+        return fallback(env)
 
-    response = client.chat.completions.create(
-        model=MODEL_NAME,
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user",   "content": prompt},
-        ],
-        max_tokens=64,
-        temperature=0.0,
-    )
+    prompt = f"""
+State:
+{env.state()}
 
-    text = response.choices[0].message.content.strip()
-    print(f"[DEBUG] LLM raw response: {text!r}", flush=True)
+Return ONLY JSON:
+{{"resource_type":0-2,"zone_id":int,"quantity_index":0-2}}
+"""
 
-    if "```" in text:
-        text = text.split("```")[1].replace("json", "").strip()
+    try:
+        print("[DEBUG] FORCING API CALL", flush=True)
 
-    data = json.loads(text)
-    resource_type  = int(data["resource_type"])
-    zone_id        = int(data["zone_id"])
-    quantity_index = int(data["quantity_index"])
+        # ✅ CORRECT ENDPOINT (CRITICAL FIX)
+        response = client.responses.create(
+            model=model,
+            input=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ],
+        )
 
-    num_zones = len(env.zones)
-    if resource_type not in (0, 1, 2):
-        raise ValueError(f"Invalid resource_type: {resource_type}")
-    if not (0 <= zone_id < num_zones):
-        raise ValueError(f"Invalid zone_id: {zone_id}")
-    if quantity_index not in (0, 1, 2):
-        raise ValueError(f"Invalid quantity_index: {quantity_index}")
+        print("[DEBUG] API RESPONSE RECEIVED", flush=True)
 
-    return (resource_type, zone_id, quantity_index)
+        text = response.output_text.strip()
+
+        try:
+            if "```" in text:
+                text = text.split("```")[1].replace("json", "").strip()
+
+            data = json.loads(text)
+
+            return (
+                int(data["resource_type"]),
+                int(data["zone_id"]),
+                int(data["quantity_index"]),
+            )
+
+        except Exception as parse_error:
+            print(f"[ERROR] Parsing failed: {parse_error}", flush=True)
+            return fallback(env)
+
+    except Exception as api_error:
+        print(f"[ERROR] API failed: {api_error}", flush=True)
+        return fallback(env)
 
 
-def run_task(task, client):
+# ─────────────────────────────
+def run_task(task, client, model):
     env = DisasterEnv(task["difficulty"])
     env.reset()
 
-    rewards    = []
+    rewards = []
     step_count = 0
-    done       = False
+    done = False
 
-    print(
-        f"[START] task={task['id']} env=disaster-resource-allocation model={MODEL_NAME}",
-        flush=True,
-    )
+    print(f"[START] task={task['id']} env=disaster model={model}", flush=True)
 
     while not done:
-        try:
-            action = llm_agent(env, client)
-        except Exception as e:
-            print(f"[WARN] LLM parse failed ({e}) -- using fallback", flush=True)
-            action = fallback(env)
+        action = llm_agent(env, client, model)
 
-        resource_type, zone_id, quantity_index = action
         obs, reward, done, info = env.step(action)
 
         rewards.append(reward)
         step_count += 1
 
-        action_str = f"{RESOURCE_NAMES[resource_type]}-{zone_id}-{QTY_MAP[quantity_index]}"
+        action_str = f"{RESOURCE_NAMES[action[0]]}-{action[1]}-{QTY_MAP[action[2]]}"
 
         print(
             f"[STEP] step={step_count} action={action_str} "
@@ -162,8 +143,11 @@ def run_task(task, client):
         )
 
     total_reward = sum(rewards)
-    score = max(0.0, min(1.0, total_reward / (task["max_steps"] * 0.6)))
+    score = total_reward / (task["max_steps"] * 0.6)
+    score = max(0.0, min(1.0, score))
+
     success = score >= task["success_threshold"]
+
     rewards_str = ",".join(f"{r:.2f}" for r in rewards)
 
     print(
@@ -172,16 +156,14 @@ def run_task(task, client):
         flush=True,
     )
 
-    return score
 
-
+# ─────────────────────────────
 if __name__ == "__main__":
-    client = get_client()
+    try:
+        client, model = get_client()
 
-    all_scores = []
-    for task in TASKS:
-        score = run_task(task, client)
-        all_scores.append(score)
+        for task in TASKS:
+            run_task(task, client, model)
 
-    overall = sum(all_scores) / len(all_scores)
-    print(f"[SUMMARY] overall_score={overall:.3f}", flush=True)
+    except Exception as e:
+        print(f"[FATAL] {e}", flush=True)
