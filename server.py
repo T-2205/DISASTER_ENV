@@ -36,14 +36,25 @@ _env: Optional[DisasterEnv] = None
 # ─────────────────────────────
 @app.on_event("startup")
 def startup_event():
+    import threading
+
     def run_inference():
         try:
             print("[DEBUG] STARTING INFERENCE...", flush=True)
-            import inference  # this will run your script
+
+            import inference
+
+            # 🔥 CRITICAL: manually call main logic
+            client, model = inference.get_client()
+
+            for task in inference.TASKS:
+                inference.run_task(task, client, model)
+
         except Exception as e:
-            print(f"[ERROR] Inference failed: {e}", flush=True)
+            print(f"[ERROR] Failed to run inference: {e}", flush=True)
 
     print("[DEBUG] STARTUP EVENT TRIGGERED", flush=True)
+
     threading.Thread(target=run_inference).start()
 
 
