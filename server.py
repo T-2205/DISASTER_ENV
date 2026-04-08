@@ -1,10 +1,3 @@
-"""
-server.py — FastAPI server exposing the DisasterEnv as an HTTP API.
-Fixed for OpenEnv + Scaler Phase 2:
-- Runs inference.py in background (so API calls happen)
-- Keeps all endpoints working (Phase 1 safe)
-"""
-
 import sys, os
 sys.path.insert(0, os.path.dirname(__file__))
 
@@ -16,15 +9,15 @@ import uvicorn
 import threading
 
 from disaster_env import DisasterEnv
-from models import Observation, Action, Reward, StepResult, GraderResult, ZoneState
+from models import Observation, ZoneState
 from graders import EasyGrader, MediumGrader, HardGrader, rule_based_agent
 
+# ─────────────────────────────
+# App setup
+# ─────────────────────────────
 app = FastAPI(
     title="Disaster Resource Allocation Environment",
-    description="OpenEnv-compliant multi-zone disaster response simulation",
-    version="1.0.0",
-    docs_url="/docs",
-    redoc_url="/redoc",
+    version="1.0.0"
 )
 
 app.add_middleware(
@@ -35,25 +28,31 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Global env
 _env: Optional[DisasterEnv] = None
 
 
 # ─────────────────────────────
-# 🔥 RUN INFERENCE IN BACKGROUND
+# 🔥 CRITICAL FIX: STARTUP EVENT
 # ─────────────────────────────
-def run_inference():
-    try:
-        import inference
-    except Exception as e:
-        print(f"[ERROR] Failed to run inference: {e}", flush=True)
+@app.on_event("startup")
+def startup_event():
+    def run_inference():
+        try:
+            print("[DEBUG] STARTING INFERENCE...", flush=True)
+            import inference  # this will run your script
+        except Exception as e:
+            print(f"[ERROR] Inference failed: {e}", flush=True)
+
+    print("[DEBUG] STARTUP EVENT TRIGGERED", flush=True)
+    threading.Thread(target=run_inference).start()
 
 
 # ─────────────────────────────
-# Request models
+# Request Models
 # ─────────────────────────────
 class ResetRequest(BaseModel):
     difficulty: Optional[str] = "medium"
+
 
 class StepRequest(BaseModel):
     action: Optional[int] = None
@@ -61,9 +60,10 @@ class StepRequest(BaseModel):
     zone_id: Optional[int] = None
     quantity_index: Optional[int] = None
 
+
 class GradeRequest(BaseModel):
     task_id: Optional[str] = "medium"
-    n_episodes: Optional[int] = 10
+    n_episodes: Optional[int] = 5
 
 
 # ─────────────────────────────
@@ -180,11 +180,4 @@ def grade(request: Optional[GradeRequest] = None):
 # ─────────────────────────────
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 7860))
-
-    print(f"\nStarting server on port {port}")
-    print(f"Docs: http://localhost:{port}/docs\n")
-
-    # 🔥 CRITICAL: start inference
-    threading.Thread(target=run_inference).start()
-
-    uvicorn.run("server:app", host="0.0.0.0", port=port, reload=False)
+    uvicorn.run("server:app", host="0.0.0.0", port=port)
