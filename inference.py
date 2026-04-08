@@ -22,9 +22,9 @@ Return JSON:
 
 # ─────────────────────────────
 def get_client():
-    try:
-        from openai import OpenAI
+    from openai import OpenAI
 
+    try:
         client = OpenAI(
             base_url=os.environ["API_BASE_URL"],
             api_key=os.environ["API_KEY"],
@@ -35,13 +35,13 @@ def get_client():
             "meta-llama/Meta-Llama-3-8B-Instruct"
         )
 
+        print("[DEBUG] CLIENT CREATED", flush=True)
+
         return client, model
 
     except Exception as e:
-        print(f"[FATAL] client error: {e}", flush=True)
+        print(f"[FATAL] CLIENT ERROR: {e}", flush=True)
         return None, None
-
-
 # ─────────────────────────────
 def fallback(env):
     for z in env.zones:
@@ -60,10 +60,19 @@ def fallback(env):
 # ─────────────────────────────
 def llm_agent(env, client, model):
     if client is None:
+        print("[WARN] client is None → fallback", flush=True)
         return fallback(env)
 
+    prompt = f"""
+State:
+{env.state()}
+
+Return ONLY JSON:
+{{"resource_type":0-2,"zone_id":int,"quantity_index":0-2}}
+"""
+
     try:
-        prompt = str(env.state())
+        print("[DEBUG] FORCING API CALL", flush=True)
 
         response = client.chat.completions.create(
             model=model,
@@ -75,22 +84,28 @@ def llm_agent(env, client, model):
             temperature=0.0,
         )
 
+        print("[DEBUG] API RESPONSE RECEIVED", flush=True)
         text = response.choices[0].message.content.strip()
 
-        if "```" in text:
-            text = text.split("```")[1].replace("json", "").strip()
+        try:
+            if "```" in text:
+                text = text.split("```")[1].replace("json", "").strip()
 
-        data = json.loads(text)
+            data = json.loads(text)
 
-        return (
-            int(data["resource_type"]),
-            int(data["zone_id"]),
-            int(data["quantity_index"]),
-        )
+            return (
+                int(data["resource_type"]),
+                int(data["zone_id"]),
+                int(data["quantity_index"]),
+            )
 
-    except Exception:
+        except Exception as parse_error:
+            print(f"[ERROR] Parsing failed: {parse_error}", flush=True)
+            return fallback(env)
+
+    except Exception as api_error:
+        print(f"[ERROR] API failed: {api_error}", flush=True)
         return fallback(env)
-
 
 # ─────────────────────────────
 def run_task(task, client, model):
