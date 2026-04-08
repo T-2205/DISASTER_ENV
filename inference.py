@@ -30,23 +30,26 @@ def get_client():
     print(f"[DEBUG] API_BASE_URL={api_base}", flush=True)
     print(f"[DEBUG] API_KEY exists={api_key is not None}", flush=True)
 
-    if not api_base or not api_key:
-        raise RuntimeError("Missing API_BASE_URL or API_KEY")
+    # ✅ If running in Scaler → use real API
+    if api_base and api_key:
+        client = OpenAI(
+            base_url=api_base,
+            api_key=api_key,
+        )
 
-    client = OpenAI(
-        base_url=api_base,
-        api_key=api_key,
-    )
+        model = os.environ.get(
+            "MODEL_NAME",
+            "gpt-4o-mini"   # safe default
+        )
 
-    model = os.environ.get(
-        "MODEL_NAME",
-        "meta-llama/Meta-Llama-3-8B-Instruct"
-    )
+        print("[DEBUG] USING SCALER API", flush=True)
 
-    print(f"[DEBUG] MODEL={model}", flush=True)
-    print("[DEBUG] CLIENT CREATED", flush=True)
+        return client, model
 
-    return client, model
+    # ⚠️ If running locally / HF → fallback mode
+    print("[WARNING] No API detected → running in fallback mode", flush=True)
+
+    return None, None
 
 
 # ─────────────────────────────
