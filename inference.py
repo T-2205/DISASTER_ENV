@@ -81,7 +81,6 @@ Return ONLY JSON:
     try:
         print("[DEBUG] FORCING API CALL", flush=True)
 
-        # ✅ CORRECT ENDPOINT (CRITICAL FIX)
         response = client.responses.create(
             model=model,
             input=[
@@ -92,7 +91,15 @@ Return ONLY JSON:
 
         print("[DEBUG] API RESPONSE RECEIVED", flush=True)
 
-        text = response.output_text.strip()
+        # 🔥 SAFE RESPONSE EXTRACTION (FINAL FIX)
+        try:
+            text = response.output_text
+            if not text:
+                text = response.output[0].content[0].text
+            text = text.strip()
+        except Exception:
+            print("[ERROR] Failed to extract response text", flush=True)
+            return fallback(env)
 
         try:
             if "```" in text:
